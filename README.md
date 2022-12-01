@@ -50,4 +50,3 @@ To get a list of the driver flags:
 
 	unix> mdriver -h
 
-# Team07-malloc-lab
