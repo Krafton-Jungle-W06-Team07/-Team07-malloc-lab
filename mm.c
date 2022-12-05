@@ -129,28 +129,28 @@ int mm_init(void)
 static void *find_fit(size_t asize)
 {
     void *bp;
-    for (bp = heap_listp; GET_SIZE(bp) > 0; bp = NEXT_BLKP(bp))
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
     {
-        if (GET_SIZE(bp) >= asize && GET_ALLOC(bp) == 0)
+        if (GET_SIZE(HDRP(bp)) >= asize && (!GET_ALLOC(HDRP(bp))))
             return bp;
     }
     return NULL;
 }
 static void place(void *bp, size_t asize)
 {
-    size_t csize = GET_SIZE(HDRP(bp)) - asize;
-    if ((csize >= 2 * DSIZE))
+    size_t csize = GET_SIZE(HDRP(bp));
+    if ((csize - asize) >= (2 * DSIZE))
     {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
-        PUT(HDRP(bp), PACK(csize, 0));
-        PUT(FTRP(bp), PACK(csize, 0));
+        PUT(HDRP(bp), PACK(csize - asize, 0));
+        PUT(FTRP(bp), PACK(csize - asize, 0));
     }
     else
     {
-        PUT(HDRP(bp), PACK(GET_SIZE(HDRP(bp)), 0));
-        PUT(FTRP(bp), PACK(GET_SIZE(HDRP(bp)), 0));
+        PUT(HDRP(bp), PACK(csize, 1));
+        PUT(FTRP(bp), PACK(csize, 1));
     }
 }
 void *mm_malloc(size_t size)
@@ -165,7 +165,7 @@ void *mm_malloc(size_t size)
     if (size <= DSIZE)
         asize = 2 * DSIZE;
     else
-    asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
+        asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL)
     {
@@ -202,7 +202,7 @@ void *mm_realloc(void *ptr, size_t size)
     newptr = mm_malloc(size);
     if (newptr == NULL)
         return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
+    copySize = GET_SIZE(HDRP(oldptr));
     if (size < copySize)
         copySize = size;
     memcpy(newptr, oldptr, copySize);
