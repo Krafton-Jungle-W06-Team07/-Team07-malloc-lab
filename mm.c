@@ -57,6 +57,7 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 static char *heap_listp;
+static char *last_find;
 /*
  * mm_init - initialize the malloc package.
  */
@@ -67,6 +68,7 @@ static void *coalesce(void *bp)
     size_t size = GET_SIZE(HDRP(bp));
     if (prev_alloc && next_alloc)
     { /* Case 1 */
+        last_find = bp;
         return bp;
     }
     else if (prev_alloc && !next_alloc)
@@ -89,6 +91,7 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
+    last_find = bp;
     return bp;
 }
 static void *extend_heap(size_t words)
@@ -119,6 +122,7 @@ int mm_init(void)
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
+    last_find = heap_listp;
     return 0;
 }
 
@@ -128,11 +132,24 @@ int mm_init(void)
  */
 static void *find_fit(size_t asize)
 {
-    void *bp;
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    char *bp = last_find;
+    for (bp = NEXT_BLKP(bp); GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
     {
         if (GET_SIZE(HDRP(bp)) >= asize && (!GET_ALLOC(HDRP(bp))))
+        {
+            last_find = bp;
             return bp;
+        }
+    }
+    bp = heap_listp;
+    while (bp < last_find)
+    {
+        bp = NEXT_BLKP(bp);
+        if (GET_SIZE(HDRP(bp)) >= asize && (!GET_ALLOC(HDRP(bp))))
+        {
+            last_find = bp;
+            return bp;
+        }
     }
     return NULL;
 }
@@ -170,6 +187,7 @@ void *mm_malloc(size_t size)
     if ((bp = find_fit(asize)) != NULL)
     {
         place(bp, asize);
+        last_find = bp;
         return bp;
     }
     /* No fit found. Get more memory and place the block */
@@ -177,6 +195,7 @@ void *mm_malloc(size_t size)
     if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
         return NULL;
     place(bp, asize);
+    last_find = bp;
     return bp;
 }
 /*
