@@ -21,6 +21,7 @@
 
 #define WSIZE 4
 #define DSIZE 8
+#define MIN 16
 #define CHUNKSIZE (1 << 12)
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define PACK(size, alloc) ((size) | (alloc))
@@ -30,6 +31,8 @@
 #define GET_ALLOC(p) (GET(p) & 0x1)
 #define HDRP(bp) ((char *)(bp)-WSIZE)
 #define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
+#define PREC_FREEP(bp) (*(void **)(bp))
+#define SUCC_FREEP(bp) (*(void **)(bp + WSIZE))
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp)-WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp)-GET_SIZE(((char *)(bp)-DSIZE)))
 
@@ -57,41 +60,74 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 static char *heap_listp;
-static char *last_find;
+static char *listp;
+
+static void *coalesce(void *bp);
+static void *extend_heap(size_t words);
+static void *find_fit(size_t asize);
+static void place(void *bp, size_t asize);
+static void put_list(void *bp);
+static void remove_list(void *bp);
+
 /*
  * mm_init - initialize the malloc package.
  */
+void remove_list(void *bp)
+{
+    if (bp == listp)
+    { //리스트의 첫 부분을 삭제할때
+        PREC_FREEP(SUCC_FREEP(bp)) = NULL;
+        listp = SUCC_FREEP(bp);
+    }
+    else
+    { //리스트 중간에서 삭제할 때
+        SUCC_FREEP(PREC_FREEP(bp)) = SUCC_FREEP(bp);
+        PREC_FREEP(SUCC_FREEP(bp)) = PREC_FREEP(bp);
+    }
+}
+void put_list(void *bp)
+{
+    // SUCC_FREEP(bp) = SUCC_FREEP(listp);
+    // PREC_FREEP(bp) = listp;
+    // PREC_FREEP(SUCC_FREEP(listp)) = bp;
+    // SUCC_FREEP(listp) = bp;
+    PREC_FREEP(bp) = NULL;
+    SUCC_FREEP(bp) = listp;
+    PREC_FREEP(listp) = bp;
+    listp = bp;
+}
+
 static void *coalesce(void *bp)
 {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
-    if (prev_alloc && next_alloc)
-    { /* Case 1 */
-        last_find = bp;
-        return bp;
-    }
-    else if (prev_alloc && !next_alloc)
+
+    if (prev_alloc && !next_alloc)
     { /* Case 2 */
+        remove_list(NEXT_BLKP(bp));
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
     }
     else if (!prev_alloc && next_alloc)
     { /* Case 3 */
+        remove_list(PREV_BLKP(bp));
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
+        PUT(HDRP(bp), PACK(size, 0));
     }
-    else
+    else if(!prev_alloc && !next_alloc)
     { /* Case 4 */
+        remove_list(NEXT_BLKP(bp));
+        remove_list(PREV_BLKP(bp));
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
-    last_find = bp;
+    put_list(bp);
     return bp;
 }
 static void *extend_heap(size_t words)
@@ -108,13 +144,15 @@ static void *extend_heap(size_t words)
 }
 int mm_init(void)
 {
-    if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
+    if ((heap_listp = mem_sbrk(6 * WSIZE)) == (void *)-1)
         return -1;
     PUT(heap_listp, 0);
-    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1));
-    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1));
-    PUT(heap_listp + (3 * WSIZE), PACK(0, 1));
-    heap_listp += (2 * WSIZE);
+    PUT(heap_listp + (1 * WSIZE), PACK(MIN, 1));
+    PUT(heap_listp + (2 * WSIZE), heap_listp+(3*WSIZE));
+    PUT(heap_listp + (3 * WSIZE), heap_listp+(2*WSIZE));
+    PUT(heap_listp + (4 * WSIZE), PACK(MIN, 1));
+    PUT(heap_listp + (5 * WSIZE), PACK(0, 1));
+    listp = heap_listp + (2 * WSIZE);
     /* Alignment padding */
     /* Prologue header */
     /* Prologue footer */
@@ -122,7 +160,6 @@ int mm_init(void)
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE / WSIZE) == NULL)
         return -1;
-    last_find = heap_listp;
     return 0;
 }
 
@@ -132,30 +169,42 @@ int mm_init(void)
  */
 static void *find_fit(size_t asize)
 {
-    char *bp = last_find;
-    for (bp = NEXT_BLKP(bp); GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    void* bp = listp;
+    while(!GET_ALLOC(HDRP(bp)))
     {
-        if (GET_SIZE(HDRP(bp)) >= asize && (!GET_ALLOC(HDRP(bp))))
+        if (GET_SIZE(HDRP(bp)) >= asize)
         {
-            last_find = bp;
             return bp;
         }
+        bp = SUCC_FREEP(bp);
     }
-    bp = heap_listp;
-    while (bp < last_find)
-    {
-        bp = NEXT_BLKP(bp);
-        if (GET_SIZE(HDRP(bp)) >= asize && (!GET_ALLOC(HDRP(bp))))
-        {
-            last_find = bp;
-            return bp;
-        }
-    }
+
     return NULL;
+    // char *bp = last_find;
+    // for (bp = NEXT_BLKP(bp); GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    // {
+    //     if (GET_SIZE(HDRP(bp)) >= asize && (!GET_ALLOC(HDRP(bp))))
+    //     {
+    //         last_find = bp;
+    //         return bp;
+    //     }
+    // }
+    // bp = heap_listp;
+    // while (bp < last_find)
+    // {
+    //     bp = NEXT_BLKP(bp);
+    //     if (GET_SIZE(HDRP(bp)) >= asize && (!GET_ALLOC(HDRP(bp))))
+    //     {
+    //         last_find = bp;
+    //         return bp;
+    //     }
+    // }
+    // return NULL;
 }
 static void place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));
+    remove_list(bp);
     if ((csize - asize) >= (2 * DSIZE))
     {
         PUT(HDRP(bp), PACK(asize, 1));
@@ -163,6 +212,7 @@ static void place(void *bp, size_t asize)
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize - asize, 0));
         PUT(FTRP(bp), PACK(csize - asize, 0));
+        put_list(bp);
     }
     else
     {
@@ -187,7 +237,6 @@ void *mm_malloc(size_t size)
     if ((bp = find_fit(asize)) != NULL)
     {
         place(bp, asize);
-        last_find = bp;
         return bp;
     }
     /* No fit found. Get more memory and place the block */
@@ -195,7 +244,6 @@ void *mm_malloc(size_t size)
     if ((bp = extend_heap(extendsize / WSIZE)) == NULL)
         return NULL;
     place(bp, asize);
-    last_find = bp;
     return bp;
 }
 /*
