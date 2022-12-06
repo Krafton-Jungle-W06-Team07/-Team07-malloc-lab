@@ -69,15 +69,16 @@ team_t team = {
 
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
-static void *find_fit(size_t asize);
+static void *first_fit(size_t asize);
+static void *next_fit(size_t asize);
+static void *best_fit(size_t asize);
 static void place(void *bp, size_t asize);
 
 static char *heap_listp;  
+static void *next_heap_listp;
 
 
 /******    메인 함수    ******/
-
-
 
 /**
  * @brief mm_init - initialize the malloc package.
@@ -99,6 +100,7 @@ int mm_init(void)
     PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1)); // 프롤로그 푸터
     PUT(heap_listp + (3*WSIZE), PACK(0, 1)); // 에필로그 헤더
     heap_listp += (2*WSIZE); // heap_listp 위치를 프롤로그 헤더 뒤로 옮긴다.
+    next_heap_listp = heap_listp; // next_fit에서 사용하기 위해 초기 포인터 위치를 넣어준다.
 
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL) // 2. 이후 일반 블록을 저장하기 위해 힙을 확장한다.
         return -1;
@@ -141,7 +143,9 @@ void *mm_malloc(size_t size)
         asize = DSIZE * ((size + (DSIZE) + (DSIZE - 1)) / DSIZE);
 
     // 조정한 크기(asize)에 대해 가용 리스트에서 적절한 가용 블록을 찾는다.
-    if ((bp = find_fit(asize)) != NULL) {
+    bp = next_fit(asize); // Choice fit-method : first_fit, next_fit, best_fit
+
+    if (bp != NULL) {
         place(bp, asize); // 초과부분을 분할한다.
         return bp; // 새롭게 할당한 블록을 리턴한다.
     }
@@ -264,6 +268,10 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
+    // next_heap_listp가 속해있는 블록이 이전 블록과 합쳐진다면 
+    // next_heap_listp에 해당하는 블록을 찾아갈 수 없으므로
+    // 새로 next_heap_listp를 이전 블록 위치로 지정해준다.
+    next_heap_listp = bp; 
     return bp;
 }
 
@@ -273,17 +281,54 @@ static void *coalesce(void *bp)
  * @param size_t asize 새로 할당하려는 블록 바이트 수
  * @return void* 
  */
-static void *find_fit(size_t asize)
+static void *first_fit(size_t asize)
 {
     void *bp;
 
     // 에필로그 블록의 헤더를 0으로 넣어줬으므로 에필로그 블록을 만날 때까지 탐색을 진행한다.
-    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
             return bp;
-    }
-
+    
     return NULL;
+}
+
+/**
+ * @brief next-fit 방식으로 가용 블록 탐색
+ * 
+ * @param size_t asize 새로 할당하려는 블록 바이트 수
+ * @return void* 
+ */
+static void *next_fit(size_t asize)
+{
+    void *bp;
+
+    // next_fit 포인터에서 탐색을 시작한다.
+    for (bp = next_heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
+            return bp;
+    
+    return NULL;
+}
+
+/**
+ * @brief best-fit 방식으로 가용 블록 탐색
+ * 
+ * @param size_t asize 새로 할당하려는 블록 바이트 수
+ * @return void* 
+ */
+static void *best_fit(size_t asize)
+{
+    void *bp;
+    void *best_fit = NULL;
+
+    for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
+            // 기존에 할당하려던 공간보다 더 최적의 공간이 나타났을 경우 리턴 블록 포인터 갱신
+            if (!best_fit || GET_SIZE(HDRP(bp)) < GET_SIZE(HDRP(best_fit))) 
+                best_fit = bp;
+    
+    return best_fit;
 }
 
 /**
@@ -302,12 +347,13 @@ static void place(void *bp, size_t asize)
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
+        next_heap_listp = bp; // 분할 이후 그 다음 블록
         // 새로운 할당 블록(전체 가용 블록 - 할당 블록)의 뒷 부분을 가용 블록으로 만든다.
         PUT(HDRP(bp), PACK(csize - asize, 0));
         PUT(FTRP(bp), PACK(csize - asize, 0));
     } else {
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
+        next_heap_listp = NEXT_BLKP(bp); // 분할 이후 그 다음 블록
     }
 }
-
