@@ -75,7 +75,7 @@ static void *best_fit(size_t asize);
 static void place(void *bp, size_t asize);
 
 static char *heap_listp;  
-static void *next_heap_listp;
+static char *next_heap_listp;
 
 
 /******    메인 함수    ******/
@@ -147,6 +147,7 @@ void *mm_malloc(size_t size)
 
     if (bp != NULL) {
         place(bp, asize); // 초과부분을 분할한다.
+        next_heap_listp = bp;
         return bp; // 새롭게 할당한 블록을 리턴한다.
     }
 
@@ -155,6 +156,7 @@ void *mm_malloc(size_t size)
     if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
         return NULL;
     place(bp, asize);
+    next_heap_listp = bp;
     return bp;
 }
 
@@ -174,27 +176,46 @@ void mm_free(void *ptr)
     coalesce(ptr); // 인접 가용 블록들에 대한 연결을 수행한다.
 }
 
-/*
- * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
+/**
+ * @brief mm_realloc - Implemented simply in terms of mm_malloc and mm_free
+ * 
+ * @param void* ptr 이전 메모리 포인터 
+ * @param size_t size 조정하려는 메모리 사이즈(기존 사이즈보다 작을 수도 있다.)
+ * @return void* 
  */
+
 void *mm_realloc(void *ptr, size_t size)
 {
-    void *oldptr = ptr;
-    void *newptr;
-    size_t copySize;
-    
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
-      return NULL;
-    copySize = GET_SIZE(HDRP(oldptr));
-    // copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    if (size < copySize)
-      copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
-    return newptr;
-}
+    void *oldptr = ptr; // 이전 포인터
+    void *newptr; // 새로 메모리 할당할포인터
 
+    size_t originsize = GET_SIZE(HDRP(oldptr)); // 원본 사이즈
+    size_t newsize = size + DSIZE; // 새 사이즈
+
+    // size 가 더 작은 경우
+    if (newsize <= originsize) { 
+        // PUT(HDRP(oldptr), PACK(size + 8, 1)); // 새로운 헤더
+        // PUT(oldptr + size, PACK(size + 8, 1)); // 새로운 푸터
+        return oldptr;
+    } else {
+        size_t addSize = originsize + GET_SIZE(HDRP(NEXT_BLKP(oldptr))); // 추가 사이즈 -> 헤더 포함 사이즈
+        if (!GET_ALLOC(HDRP(NEXT_BLKP(oldptr))) && (newsize <= addSize)){ // 가용 블록이고 사이즈 충분
+            PUT(HDRP(oldptr), PACK(addSize, 1)); // 새로운 헤더
+            PUT(FTRP(oldptr), PACK(addSize, 1)); // 새로운 푸터
+            return oldptr;
+        } else {
+            newptr = mm_malloc(newsize);
+            if (newptr == NULL)
+                return NULL;
+            memmove(newptr, oldptr, newsize);
+            mm_free(oldptr);
+            return newptr;
+
+        // PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+        // PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+        }
+    }
+}
 
 /******    서브 함수    ******/
 
@@ -301,13 +322,17 @@ static void *first_fit(size_t asize)
  */
 static void *next_fit(size_t asize)
 {
-    void *bp;
+    char *bp;
 
     // next_fit 포인터에서 탐색을 시작한다.
-    for (bp = next_heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    for (bp = NEXT_BLKP(next_heap_listp); GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
             return bp;
     
+    for (bp = heap_listp; bp <= next_heap_listp; bp = NEXT_BLKP(bp))
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp))))
+            return bp;
+
     return NULL;
 }
 
