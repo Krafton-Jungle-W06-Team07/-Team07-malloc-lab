@@ -118,17 +118,6 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-    /* 기본형 */
-    
-    // int newsize = ALIGN(size + SIZE_T_SIZE);
-    // void *p = mem_sbrk(newsize);
-    // if (p == (void *)-1)
-	// return NULL;
-    // else {
-    //     *(size_t *)p = size;
-    //     return (void *)((char *)p + SIZE_T_SIZE);
-    // }
-
     size_t asize;
     size_t extendsize;
     char *bp;
@@ -178,6 +167,7 @@ void mm_free(void *ptr)
 
 /**
  * @brief mm_realloc - Implemented simply in terms of mm_malloc and mm_free
+ * @details 할당 블록 크기 재조정
  * 
  * @param void* ptr 이전 메모리 포인터 
  * @param size_t size 조정하려는 메모리 사이즈(기존 사이즈보다 작을 수도 있다.)
@@ -194,8 +184,6 @@ void *mm_realloc(void *ptr, size_t size)
 
     // size 가 더 작은 경우
     if (newsize <= originsize) { 
-        // PUT(HDRP(oldptr), PACK(size + 8, 1)); // 새로운 헤더
-        // PUT(oldptr + size, PACK(size + 8, 1)); // 새로운 푸터
         return oldptr;
     } else {
         size_t addSize = originsize + GET_SIZE(HDRP(NEXT_BLKP(oldptr))); // 추가 사이즈 -> 헤더 포함 사이즈
@@ -207,15 +195,13 @@ void *mm_realloc(void *ptr, size_t size)
             newptr = mm_malloc(newsize);
             if (newptr == NULL)
                 return NULL;
-            memmove(newptr, oldptr, newsize);
+            memmove(newptr, oldptr, newsize); // memcpy 사용 시, memcpy-param-overlap 발생
             mm_free(oldptr);
             return newptr;
-
-        // PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-        // PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         }
     }
 }
+
 
 /******    서브 함수    ******/
 
